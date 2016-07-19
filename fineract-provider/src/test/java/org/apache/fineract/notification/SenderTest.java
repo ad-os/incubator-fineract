@@ -1,7 +1,5 @@
 package org.apache.fineract.notification;
 
-import javax.jms.*;
-
 import com.mockrunner.mock.jms.MockQueue;
 import org.apache.fineract.notification.data.NotificationData;
 import org.junit.Test;
@@ -11,6 +9,10 @@ import org.springframework.jms.core.JmsTemplate;
 import org.springframework.jms.core.MessageCreator;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+
+import javax.jms.JMSException;
+import javax.jms.Message;
+import javax.jms.Session;
 
 @ContextConfiguration(locations = {
         "classpath:META-INF/testNotificationContext.xml",

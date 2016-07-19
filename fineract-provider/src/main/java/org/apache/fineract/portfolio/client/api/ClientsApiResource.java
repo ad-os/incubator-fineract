@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 
+import javax.jms.Queue;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.DefaultValue;
@@ -37,6 +38,7 @@ import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.UriInfo;
 
+import org.apache.activemq.command.ActiveMQQueue;
 import org.apache.commons.lang.StringUtils;
 import org.apache.fineract.commands.domain.CommandWrapper;
 import org.apache.fineract.commands.service.CommandWrapperBuilder;
@@ -49,9 +51,13 @@ import org.apache.fineract.infrastructure.core.serialization.ToApiJsonSerializer
 import org.apache.fineract.infrastructure.core.service.Page;
 import org.apache.fineract.infrastructure.core.service.SearchParameters;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
+import org.apache.fineract.notification.data.NotificationData;
+import org.apache.fineract.notification.eventandlistener.NotificationEvent;
 import org.apache.fineract.portfolio.accountdetails.data.AccountSummaryCollectionData;
 import org.apache.fineract.portfolio.accountdetails.service.AccountDetailsReadPlatformService;
 import org.apache.fineract.portfolio.client.data.ClientData;
+import org.apache.fineract.portfolio.client.domain.Client;
+import org.apache.fineract.portfolio.client.domain.ClientRepository;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
 import org.apache.fineract.portfolio.savings.data.SavingsAccountData;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountReadPlatformService;
@@ -72,15 +78,17 @@ public class ClientsApiResource {
     private final PortfolioCommandSourceWritePlatformService commandsSourceWritePlatformService;
     private final AccountDetailsReadPlatformService accountDetailsReadPlatformService;
     private final SavingsAccountReadPlatformService savingsAccountReadPlatformService;
+    private final ClientRepository clientRepository;
+    private final NotificationEvent notificationEvent;
 
     @Autowired
     public ClientsApiResource(final PlatformSecurityContext context, final ClientReadPlatformService readPlatformService,
-            final ToApiJsonSerializer<ClientData> toApiJsonSerializer,
-            final ToApiJsonSerializer<AccountSummaryCollectionData> clientAccountSummaryToApiJsonSerializer,
-            final ApiRequestParameterHelper apiRequestParameterHelper,
-            final PortfolioCommandSourceWritePlatformService commandsSourceWritePlatformService,
-            final AccountDetailsReadPlatformService accountDetailsReadPlatformService,
-            final SavingsAccountReadPlatformService savingsAccountReadPlatformService) {
+                              final ToApiJsonSerializer<ClientData> toApiJsonSerializer,
+                              final ToApiJsonSerializer<AccountSummaryCollectionData> clientAccountSummaryToApiJsonSerializer,
+                              final ApiRequestParameterHelper apiRequestParameterHelper,
+                              final PortfolioCommandSourceWritePlatformService commandsSourceWritePlatformService,
+                              final AccountDetailsReadPlatformService accountDetailsReadPlatformService,
+                              final SavingsAccountReadPlatformService savingsAccountReadPlatformService, ClientRepository clientRepository, NotificationEvent notificationEvent) {
         this.context = context;
         this.clientReadPlatformService = readPlatformService;
         this.toApiJsonSerializer = toApiJsonSerializer;
@@ -89,6 +97,8 @@ public class ClientsApiResource {
         this.commandsSourceWritePlatformService = commandsSourceWritePlatformService;
         this.accountDetailsReadPlatformService = accountDetailsReadPlatformService;
         this.savingsAccountReadPlatformService = savingsAccountReadPlatformService;
+        this.clientRepository = clientRepository;
+        this.notificationEvent = notificationEvent;
     }
 
     @GET
@@ -189,6 +199,22 @@ public class ClientsApiResource {
                 .build(); //
 
         final CommandProcessingResult result = this.commandsSourceWritePlatformService.logCommandSource(commandRequest);
+        Queue queue = new ActiveMQQueue("NotificationQueue");
+
+        Client client = clientRepository.findOne(result.getClientId());
+
+        NotificationData notificationData = new NotificationData.NotificationBuilder()
+                .withUserId(context.authenticatedUser().getId())
+                .withObjectType("client")
+                .withObjectIdentifier(result.getClientId())
+                .withNotificationContent("A new client with name " + client.getDisplayName() + " was created by " +
+                                        context.authenticatedUser().getUsername())
+                .withAction("created")
+                .withActor(context.authenticatedUser().getUsername())
+                .withTenantIdentifier("default")
+                .build();
+
+        notificationEvent.broadcastNotification(queue, notificationData);
 
         return this.toApiJsonSerializer.serialize(result);
     }
