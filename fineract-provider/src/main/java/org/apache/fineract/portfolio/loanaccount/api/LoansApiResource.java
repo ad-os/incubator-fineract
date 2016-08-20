@@ -47,6 +47,8 @@ import org.apache.fineract.portfolio.account.data.PortfolioAccountDTO;
 import org.apache.fineract.portfolio.account.data.PortfolioAccountData;
 import org.apache.fineract.portfolio.account.service.AccountAssociationsReadPlatformService;
 import org.apache.fineract.portfolio.account.service.PortfolioAccountReadPlatformService;
+import org.apache.fineract.portfolio.accountdetails.data.LoanAccountSummaryData;
+import org.apache.fineract.portfolio.accountdetails.service.AccountDetailsReadPlatformService;
 import org.apache.fineract.portfolio.calendar.data.CalendarData;
 import org.apache.fineract.portfolio.calendar.domain.CalendarEntityType;
 import org.apache.fineract.portfolio.calendar.service.CalendarReadPlatformService;
@@ -117,7 +119,8 @@ public class LoansApiResource {
             "termFrequencyTypeOptions", "interestRateFrequencyTypeOptions", "fundOptions", "repaymentStrategyOptions", "chargeOptions",
             "loanOfficerOptions", "loanPurposeOptions", "loanCollateralOptions", "chargeTemplate", "calendarOptions",
             "syncDisbursementWithMeeting", "loanCounter", "loanProductCounter", "notes", "accountLinkingOptions", "linkedAccount",
-            "interestRateDifferential", "isFloatingInterestRate", "interestRatesPeriods"));
+            "interestRateDifferential", "isFloatingInterestRate", "interestRatesPeriods", LoanApiConstants.canUseForTopup,
+            LoanApiConstants.isTopup, LoanApiConstants.loanIdToClose, LoanApiConstants.topupAmount, LoanApiConstants.clientActiveLoanOptions));
 
     private final Set<String> LOAN_APPROVAL_DATA_PARAMETERS = new HashSet<>(Arrays.asList("approvalDate", "approvalAmount"));
     private final String resourceNameForPermissions = "LOAN";
@@ -145,25 +148,29 @@ public class LoansApiResource {
     private final AccountAssociationsReadPlatformService accountAssociationsReadPlatformService;
     private final LoanScheduleHistoryReadPlatformService loanScheduleHistoryReadPlatformService;
     private final ApplicationEventPublisher publisher;
+    private final AccountDetailsReadPlatformService accountDetailsReadPlatformService;
+
+
     @Autowired
     public LoansApiResource(final PlatformSecurityContext context, final LoanReadPlatformService loanReadPlatformService,
-                            final LoanProductReadPlatformService loanProductReadPlatformService,
-                            final LoanDropdownReadPlatformService dropdownReadPlatformService, final FundReadPlatformService fundReadPlatformService,
-                            final ChargeReadPlatformService chargeReadPlatformService, final LoanChargeReadPlatformService loanChargeReadPlatformService,
-                            final CollateralReadPlatformService loanCollateralReadPlatformService,
-                            final LoanScheduleCalculationPlatformService calculationPlatformService,
-                            final GuarantorReadPlatformService guarantorReadPlatformService,
-                            final CodeValueReadPlatformService codeValueReadPlatformService, final GroupReadPlatformService groupReadPlatformService,
-                            final DefaultToApiJsonSerializer<LoanAccountData> toApiJsonSerializer,
-                            final DefaultToApiJsonSerializer<LoanApprovalData> loanApprovalDataToApiJsonSerializer,
-                            final DefaultToApiJsonSerializer<LoanScheduleData> loanScheduleToApiJsonSerializer,
-                            final ApiRequestParameterHelper apiRequestParameterHelper, final FromJsonHelper fromJsonHelper,
-                            final PortfolioCommandSourceWritePlatformService commandsSourceWritePlatformService,
-                            final CalendarReadPlatformService calendarReadPlatformService, final NoteReadPlatformServiceImpl noteReadPlatformService,
-                            final PortfolioAccountReadPlatformService portfolioAccountReadPlatformServiceImpl,
-                            final AccountAssociationsReadPlatformService accountAssociationsReadPlatformService,
-                            final LoanScheduleHistoryReadPlatformService loanScheduleHistoryReadPlatformService,
-                            final ApplicationEventPublisher publisher) {
+            final LoanProductReadPlatformService loanProductReadPlatformService,
+            final LoanDropdownReadPlatformService dropdownReadPlatformService, final FundReadPlatformService fundReadPlatformService,
+            final ChargeReadPlatformService chargeReadPlatformService, final LoanChargeReadPlatformService loanChargeReadPlatformService,
+            final CollateralReadPlatformService loanCollateralReadPlatformService,
+            final LoanScheduleCalculationPlatformService calculationPlatformService,
+            final GuarantorReadPlatformService guarantorReadPlatformService,
+            final CodeValueReadPlatformService codeValueReadPlatformService, final GroupReadPlatformService groupReadPlatformService,
+            final DefaultToApiJsonSerializer<LoanAccountData> toApiJsonSerializer,
+            final DefaultToApiJsonSerializer<LoanApprovalData> loanApprovalDataToApiJsonSerializer,
+            final DefaultToApiJsonSerializer<LoanScheduleData> loanScheduleToApiJsonSerializer,
+            final ApiRequestParameterHelper apiRequestParameterHelper, final FromJsonHelper fromJsonHelper,
+            final PortfolioCommandSourceWritePlatformService commandsSourceWritePlatformService,
+            final CalendarReadPlatformService calendarReadPlatformService, final NoteReadPlatformServiceImpl noteReadPlatformService,
+            final PortfolioAccountReadPlatformService portfolioAccountReadPlatformServiceImpl,
+            final AccountAssociationsReadPlatformService accountAssociationsReadPlatformService,
+            final LoanScheduleHistoryReadPlatformService loanScheduleHistoryReadPlatformService,
+            final AccountDetailsReadPlatformService accountDetailsReadPlatformService,
+            final ApplicationEventPublisher publisher) {
         this.context = context;
         this.loanReadPlatformService = loanReadPlatformService;
         this.loanProductReadPlatformService = loanProductReadPlatformService;
@@ -188,6 +195,7 @@ public class LoansApiResource {
         this.accountAssociationsReadPlatformService = accountAssociationsReadPlatformService;
         this.loanScheduleHistoryReadPlatformService = loanScheduleHistoryReadPlatformService;
         this.publisher = publisher;
+        this.accountDetailsReadPlatformService = accountDetailsReadPlatformService;
     }
 
     /*
@@ -255,12 +263,15 @@ public class LoansApiResource {
             // for JLG loan both client and group details are required
             if (templateType.equals("individual") || templateType.equals("jlg")) {
 
-                final LoanAccountData loanAccountClientDetails = this.loanReadPlatformService.retrieveClientDetailsTemplate(clientId);
+                if(clientId == null) {
+                    newLoanAccount = newLoanAccount == null ? LoanAccountData.emptyTemplate() : newLoanAccount;
+                } else {
+                    final LoanAccountData loanAccountClientDetails = this.loanReadPlatformService.retrieveClientDetailsTemplate(clientId);
 
-                officeId = loanAccountClientDetails.officeId();
-
-                newLoanAccount = newLoanAccount == null ? loanAccountClientDetails : LoanAccountData.populateClientDefaults(newLoanAccount,
-                        loanAccountClientDetails);
+                    officeId = loanAccountClientDetails.officeId();
+                    newLoanAccount = newLoanAccount == null ? loanAccountClientDetails : LoanAccountData.populateClientDefaults(newLoanAccount,
+                            loanAccountClientDetails);
+                }
 
                 // if it's JLG loan add group details
                 if (templateType.equals("jlg")) {
@@ -493,6 +504,7 @@ public class LoansApiResource {
         Collection<CalendarData> calendarOptions = null;
         Collection<PortfolioAccountData> accountLinkingOptions = null;
         PaidInAdvanceData paidInAdvanceTemplate = null;
+        Collection<LoanAccountSummaryData> clientActiveLoanOptions = null;
 
         final boolean template = ApiParameterHelper.template(uriInfo.getQueryParameters());
         if (template) {
@@ -547,6 +559,11 @@ public class LoansApiResource {
                 calendarOptions = this.loanReadPlatformService.retrieveCalendars(loanBasicDetails.groupId());
             }
 
+            if(loanBasicDetails.product().canUseForTopup() && loanBasicDetails.clientId() != null){
+                clientActiveLoanOptions = this.accountDetailsReadPlatformService.retrieveClientActiveLoanAccountSummary(loanBasicDetails.clientId());
+            }
+
+
         }
 
         Collection<ChargeData> overdueCharges = this.chargeReadPlatformService.retrieveLoanProductCharges(loanBasicDetails.loanProductId(),
@@ -560,7 +577,7 @@ public class LoansApiResource {
                 interestRateFrequencyTypeOptions, amortizationTypeOptions, interestTypeOptions, interestCalculationPeriodTypeOptions, 
                 fundOptions, chargeOptions, chargeTemplate, allowedLoanOfficers, loanPurposeOptions, loanCollateralOptions, 
                 calendarOptions, notes, accountLinkingOptions, linkedAccount, disbursementData, emiAmountVariations,
-                overdueCharges, paidInAdvanceTemplate, interestRatesPeriods);
+                overdueCharges, paidInAdvanceTemplate, interestRatesPeriods, clientActiveLoanOptions);
 
         final ApiRequestJsonSerializationSettings settings = this.apiRequestParameterHelper.process(uriInfo.getQueryParameters(),
                 mandatoryResponseParameters);
